@@ -1,17 +1,63 @@
 name: Test
 
-on: push
+on: [push, pull_request]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  redmine7:
     runs-on: ubuntu-latest
-    steps:
-      - name: redmine-plugin-test-action
-        uses: two-pack/redmine-plugin-test-action@v2.0.2
-        with:
-          plugin_name: redmine_serial_number_field
-          redmine_version: v4.1
-          ruby_version: v2.6
-          database: postgresql
+    container:
+      image: redmine:7.0.2@sha256:308f746a33af326fbbe71d5a2706f09b3403fdc0b55aad3d8b8c0c55b3993626
+      options: --user 0
+    services:
+      postgres:
+        image: postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSTGRES_USER: redmine
+          POSTGRES_HOST_AUTH_METHOD: trust
+        options: >-
+          --health-cmd "pg_isready -U redmine"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      RAILS_ENV: test
+      BUNDLE_WITHOUT: ''
+      BUNDLE_FROZEN: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Redmine and plugin dependencies
+        working-directory: /usr/src/redmine
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential libpq-dev pkg-config
+          ln -s "$GITHUB_WORKSPACE" plugins/redmine_serial_number_field
+          cat > config/database.yml <<'DATABASE'
+          test:
+            adapter: postgresql
+            host: postgres
+            username: redmine
+            database: redmine_test
+          development:
+            adapter: postgresql
+            host: postgres
+            username: redmine
+            database: redmine_development
+          DATABASE
+          cat > config/additional_environment.rb <<'CONFIG'
+          config.action_mailer.delivery_method = :test
+          config.action_mailer.perform_deliveries = false
+          config.active_job.queue_adapter = :test
+          CONFIG
+          bundle config set without ''
+          bundle install --jobs 4 --retry 2
+          bundle exec rake db:create db:migrate
+          RAILS_ENV=development bundle exec rake db:create db:migrate
+      - name: Plugin regression and PostgreSQL concurrency tests
+        working-directory: /usr/src/redmine
+        run: bundle exec rake redmine:plugins:test NAME=redmine_serial_number_field
+      - name: Eager loading and development reloads
+        working-directory: /usr/src/redmine
+        run: RAILS_ENV=development bundle exec rails runner plugins/redmine_serial_number_field/test/reload_smoke.rb

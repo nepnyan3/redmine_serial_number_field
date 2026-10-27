@@ -359,4 +359,48 @@ class SerialNumberField::IssuesControllerTest < ActionController::TestCase
 
   end
 
+  def test_submitted_serial_numbers_are_ignored_on_create_update_and_bulk_update
+    post :create, params: {
+      project_id: 1,
+      issue: {tracker_id: 1, subject: 'Forged input',
+              custom_field_values: {@default_custom_field.id.to_s => 'MCC-9999'}}
+    }
+    assert_response :redirect
+    issue = Issue.find_by!(subject: 'Forged input')
+    assert_added_serial_number(issue.id, 'MCC-0001', @default_custom_field)
+
+    put :update, params: {id: issue.id, issue: {
+      subject: 'Forged update', custom_field_values: {@default_custom_field.id.to_s => 'MCC-9999'}
+    }}
+    assert_response :redirect
+    assert_added_serial_number(issue.id, 'MCC-0001', @default_custom_field)
+
+    post :bulk_update, params: {ids: [issue.id], issue: {
+      custom_field_values: {@default_custom_field.id.to_s => '__none__'}
+    }}
+    assert_response :redirect
+    assert_added_serial_number(issue.id, 'MCC-0001', @default_custom_field)
+  end
+
+  def test_user_without_add_issue_permission_cannot_allocate_a_number
+    Role.find(1).remove_permission! :add_issues
+    assert_no_difference 'Issue.count' do
+      assert_no_difference 'CustomValue.where(custom_field_id: @default_custom_field.id).count' do
+        post :create, params: {project_id: 1, issue: {tracker_id: 1, subject: 'Forbidden'}}
+      end
+    end
+    assert_response :forbidden
+  end
+
+  def test_failed_issue_creation_does_not_consume_a_number
+    assert_no_difference 'Issue.count' do
+      post :create, params: {project_id: 1, issue: {tracker_id: 1, subject: ''}}
+    end
+    assert_response :success
+    post :create, params: {project_id: 1, issue: {tracker_id: 1, subject: 'Valid after failure'}}
+    assert_response :redirect
+    issue = Issue.find_by!(subject: 'Valid after failure')
+    assert_added_serial_number(issue.id, 'MCC-0001', @default_custom_field)
+  end
+
 end

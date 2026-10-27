@@ -1,6 +1,6 @@
 # Redmine Serial Number Field
 
-[English »](https://github.com/matsukei/redmine_serial_number_field/blob/master/README.en.md)
+[English »](README.en.md)
 
 Redmine に自動で連番を付加するカスタムフィールドを提供するプラグインです。
 
@@ -48,7 +48,19 @@ Redmine に自動で連番を付加するカスタムフィールドを提供す
 
 ## Supported versions
 
-* Redmine 4.1 (Ruby 2.6)
+* Redmine 7.0.2 / Rails 8.1.4 / Ruby 4.0.9 / PostgreSQL 17.6
+
+Redmine 7 向けのフォークです。上記の組み合わせで検証しています。旧 Redmine、他の Ruby バージョン、MySQL・SQLite は未検証です。原作者と MIT ライセンスを継承しています。
+
+## Redmine 7 版の採番動作
+
+* 採番範囲は従来どおりカスタムフィールド単位です。同じフィールドを使う複数プロジェクトでも連番を共有します。
+* 発行済みの番号は通常の更新で維持し、コピーには新しい番号を発行します。フォームや API から送られた採番値は無視します。
+* 最後の `{0000}` は最小桁数です。上限を超えると `9999` → `10000` → `10001` と桁が増えます。従来の文字列比較による桁あふれ後の重複を修正しました。
+* 接頭辞は正規表現ではなく文字列として扱います。記号、日本語、連番直前の固定数字も維持します。例: `A0{00}` は `A099` → `A0100`。複数の数値トークンがある場合、最後以外は従来の初期値 `01` 等を使います。
+* 日付はチケットの作成日時を使います。`YYYY` / `YY` の年度は 4 月 1 日に切り替わり、日付を含む接頭辞ごとに番号を採番します。
+* PostgreSQL では、チケット保存トランザクション内でフィールドの行をロックし、同時保存時の重複を防止します。採番に失敗すればチケット保存もロールバックします。
+* 既存の最大値を基準にする方式は維持しています。最大番号のチケットを削除・対象外へ移動した後は、その番号が再利用される場合があります。既存データの重複を自動修正する機能はありません。
 
 ## Format specifications
 
@@ -75,6 +87,21 @@ Redmine に自動で連番を付加するカスタムフィールドを提供す
 2. `$ cd your_redmine_path/`
 3. `$ bundle install`
 4. Redmineを再起動してください
+
+## 開発・テスト
+
+Redmine 本体の `plugins/redmine_serial_number_field` にこのリポジトリを配置し、本体ディレクトリで実行します。開発・テスト用 PostgreSQL を使い、本番の DB やメール設定は使用しないでください。
+
+```sh
+bundle config set without ''
+bundle install
+RAILS_ENV=test bundle exec rake db:create db:migrate
+RAILS_ENV=test bundle exec rake redmine:plugins:test NAME=redmine_serial_number_field
+RAILS_ENV=development bundle exec rake db:create db:migrate
+RAILS_ENV=development bundle exec rails runner plugins/redmine_serial_number_field/test/reload_smoke.rb
+```
+
+既存の作成・更新・コピー・一括更新・プロジェクト／トラッカー変更のテストに、日付／年度、桁あふれ、記号、権限、入力改ざん、ロールバック、4 接続での同時採番テストを追加しています。同時採番テストは非トランザクションのフィクスチャを使うため、他のテストプロセスと同じテスト DB を同時に使用しないでください。CI は同じ Redmine／PostgreSQL の公式イメージを使います。
 
 ## License
 

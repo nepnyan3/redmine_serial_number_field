@@ -1,6 +1,6 @@
 # Redmine Serial Number Field
 
-[日本語 »](https://github.com/matsukei/redmine_serial_number_field/blob/master/README.md)
+[日本語 »](README.md)
 
 Add a format to be serial number in the specified format as a issue custom field.
 
@@ -48,7 +48,18 @@ Add a format to be serial number in the specified format as a issue custom field
 
 ## Supported versions
 
-* Redmine 4.1 (Ruby 2.6)
+* Redmine 7.0.2 / Rails 8.1.4 / Ruby 4.0.9 / PostgreSQL 17.6
+
+This fork targets Redmine 7 and retains the original authorship and MIT license. The combination above is tested; older Redmine, other Ruby versions, MySQL and SQLite are not verified.
+
+## Numbering in the Redmine 7 fork
+
+* Sequences remain shared per custom field, including across projects. Ordinary edits retain the assigned number; copies get a new one. Submitted serial values are ignored, including form/API input.
+* The last numeric token is a minimum width: `9999` → `10000` → `10001`. Numeric comparison fixes duplicate allocation after width overflow.
+* Prefixes are literal, including punctuation, Japanese text and fixed digits immediately before the counter. For example, `A0{00}` advances from `A099` to `A0100`. Earlier numeric tokens retain their initial `01` etc.; only the final token advances.
+* Dates use the issue creation timestamp. Japanese fiscal years (`YYYY` / `YY`) start April 1. Each resulting date prefix has its own sequence.
+* Allocation locks the custom field row inside the issue transaction. Concurrent PostgreSQL writers share the sequence; failed allocation rolls back the issue save.
+* The existing maximum-value policy is retained: deleting or moving the highest-numbered issue out of the field can allow number reuse. Existing duplicates are not automatically repaired.
 
 ## Format specifications
 
@@ -75,6 +86,21 @@ Add a format to be serial number in the specified format as a issue custom field
 2. `$ cd your_redmine_path/`
 3. `$ bundle install`
 4. Please restart Redmine
+
+## Development and testing
+
+Install this checkout under `plugins/redmine_serial_number_field` in a Redmine 7 application and run from the Redmine root. Use dedicated development/test PostgreSQL databases, synthetic data, and disabled mail delivery; never production settings.
+
+```sh
+bundle config set without ''
+bundle install
+RAILS_ENV=test bundle exec rake db:create db:migrate
+RAILS_ENV=test bundle exec rake redmine:plugins:test NAME=redmine_serial_number_field
+RAILS_ENV=development bundle exec rake db:create db:migrate
+RAILS_ENV=development bundle exec rails runner plugins/redmine_serial_number_field/test/reload_smoke.rb
+```
+
+Tests cover existing create/edit/copy/bulk/project/tracker behavior, calendar and fiscal years, overflow, literal prefixes, authorization, forged input, rollback and concurrent allocation over four database connections. Concurrency tests use committed fixtures; do not share the test database with another concurrent test process. CI uses the same official Redmine/PostgreSQL images.
 
 ## License
 
